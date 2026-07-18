@@ -35,7 +35,7 @@ $_SESSION['LAST_ACTIVITY'] = time();
 <body class="dashboard-page">
     <header class="dashboard-header">
         <div class="dashboard-brand">
-            <img src="https://raw.githubusercontent.com/jiem10/Login/main/download.png" alt="Global Reciprocal Colleges logo">
+            <img src="https://i.imgur.com/u75GA9x.png" alt="Global Reciprocal Colleges logo">
             <h1>GRC Student Dashboard</h1>
         </div>
         <a href="logout.php" class="btn-logout">

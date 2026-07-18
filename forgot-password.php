@@ -278,7 +278,7 @@ if ($completed) {
 <div class="log">
     <div class="login-header">
         <div class="logo-container">
-            <img src="https://raw.githubusercontent.com/jiem10/Login/main/download.png" alt="Global Reciprocal Colleges logo" class="logo-img">
+            <img src="https://i.imgur.com/u75GA9x.png" alt="Global Reciprocal Colleges logo" class="logo-img">
         </div>
         <div class="welcome-text">
             <h3>Forgot Password</h3>
