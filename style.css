@@ -212,8 +212,48 @@ body {
     border-color: #b8e2c8;
 }
 
+.password-strength {
+    margin: -7px 0 10px;
+}
+
+.password-strength-track {
+    height: 6px;
+    overflow: hidden;
+    background: #e5e7eb;
+    border-radius: 999px;
+}
+
+.password-strength-bar {
+    width: 0;
+    height: 100%;
+    background: transparent;
+    border-radius: inherit;
+    transition: width 0.25s ease, background-color 0.25s ease;
+}
+
+.password-strength-bar.weak {
+    background: #dc2626;
+}
+
+.password-strength-bar.medium {
+    background: #f59e0b;
+}
+
+.password-strength-bar.strong {
+    background: #16a34a;
+}
+
+.password-strength-details {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    margin-top: 5px;
+    color: #666;
+    font-size: 11.5px;
+}
+
 .password-requirements {
-    margin: -8px 0 18px;
+    margin: 0 0 18px;
     color: #666;
     font-size: 12px;
     line-height: 1.4;

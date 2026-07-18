@@ -1,9 +1,5 @@
 <?php
-use PHPMailer\PHPMailer\Exception as MailException;
-use PHPMailer\PHPMailer\PHPMailer;
-
 require_once __DIR__ . '/config.php';
-require_once __DIR__ . '/vendor/autoload.php';
 
 const RESET_CODE_LIFETIME_MINUTES = 15;
 const RESET_CODE_MAX_ATTEMPTS = 5;
@@ -18,74 +14,6 @@ function clear_password_reset_state(): void
     );
 }
 
-function password_reset_mail_config(): array
-{
-    static $config;
-
-    if ($config === null) {
-        $config = require __DIR__ . '/mail-config.php';
-    }
-
-    return $config;
-}
-
-function is_local_request(): bool
-{
-    $remoteAddress = $_SERVER['REMOTE_ADDR'] ?? '';
-    return in_array($remoteAddress, ['127.0.0.1', '::1'], true);
-}
-
-function send_verification_email(string $recipient, string $code): array
-{
-    $config = password_reset_mail_config();
-    $host = trim((string) ($config['host'] ?? ''));
-    $fromEmail = trim((string) ($config['from_email'] ?? ''));
-
-    if ($host === '' || !filter_var($fromEmail, FILTER_VALIDATE_EMAIL)) {
-        return [
-            'sent' => false,
-            'error' => 'SMTP is not configured. Copy mail-config.local.php.example to mail-config.local.php and add your mail account.',
-        ];
-    }
-
-    $mail = new PHPMailer(true);
-
-    try {
-        $username = trim((string) ($config['username'] ?? ''));
-        $password = (string) ($config['password'] ?? '');
-        $encryption = strtolower(trim((string) ($config['encryption'] ?? 'tls')));
-
-        $mail->isSMTP();
-        $mail->Host = $host;
-        $mail->Port = (int) ($config['port'] ?? 587);
-        $mail->SMTPAuth = $username !== '';
-        $mail->Username = $username;
-        $mail->Password = $password;
-        $mail->Timeout = 10;
-        $mail->CharSet = PHPMailer::CHARSET_UTF8;
-
-        if ($encryption === 'ssl' || $encryption === 'smtps') {
-            $mail->SMTPSecure = PHPMailer::ENCRYPTION_SMTPS;
-        } elseif ($encryption === 'tls' || $encryption === 'starttls') {
-            $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
-        } else {
-            $mail->SMTPAutoTLS = false;
-        }
-
-        $mail->setFrom($fromEmail, (string) ($config['from_name'] ?? 'GRC Login'));
-        $mail->addAddress($recipient);
-        $mail->Subject = 'Your GRC password reset verification code';
-        $mail->Body = "Your password reset verification code is: {$code}\r\n\r\n"
-            . 'This code expires in ' . RESET_CODE_LIFETIME_MINUTES . " minutes.\r\n"
-            . 'If you did not request a password reset, please ignore this email.';
-        $mail->send();
-
-        return ['sent' => true, 'error' => ''];
-    } catch (MailException $exception) {
-        return ['sent' => false, 'error' => $mail->ErrorInfo ?: $exception->getMessage()];
-    }
-}
-
 function request_reset_code(mysqli $conn, string $email): array
 {
     if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
@@ -93,7 +21,6 @@ function request_reset_code(mysqli $conn, string $email): array
     }
 
     clear_password_reset_state();
-    $_SESSION['password_reset_email'] = $email;
 
     $conn->query(
         'DELETE FROM password_reset_tokens
@@ -106,54 +33,32 @@ function request_reset_code(mysqli $conn, string $email): array
     $user = $stmt->get_result()->fetch_assoc();
     $stmt->close();
 
-    if ($user) {
-        $stmt = $conn->prepare('DELETE FROM password_reset_tokens WHERE user_id = ?');
-        $stmt->bind_param('i', $user['id']);
-        $stmt->execute();
-        $stmt->close();
-
-        $code = (string) random_int(100000, 999999);
-        $codeHash = password_hash($code, PASSWORD_DEFAULT);
-        $stmt = $conn->prepare(
-            'INSERT INTO password_reset_tokens (user_id, code_hash, expires_at)
-             VALUES (?, ?, DATE_ADD(NOW(), INTERVAL 15 MINUTE))'
-        );
-        $stmt->bind_param('is', $user['id'], $codeHash);
-        $stmt->execute();
-        $stmt->close();
-
-        $delivery = send_verification_email($email, $code);
-        if (!$delivery['sent']) {
-            error_log(
-                'Password reset email delivery failed for user ID '
-                . $user['id'] . ': ' . $delivery['error']
-            );
-
-            $mailConfig = password_reset_mail_config();
-            if (is_local_request() && !empty($mailConfig['show_code_on_localhost'])) {
-                return [
-                    'error' => '',
-                    'success' => 'SMTP is not configured yet. Local testing code: ' . $code,
-                ];
-            }
-
-            $stmt = $conn->prepare('DELETE FROM password_reset_tokens WHERE user_id = ?');
-            $stmt->bind_param('i', $user['id']);
-            $stmt->execute();
-            $stmt->close();
-            clear_password_reset_state();
-
-            return [
-                'error' => 'The verification email could not be sent. Please try again later.',
-                'success' => '',
-            ];
-        }
+    if (!$user) {
+        return ['error' => 'No account was found with that email address.', 'success' => ''];
     }
 
-    // The generic response prevents account-email discovery.
-    return ['error' => '', 'success' => 'If that email is registered, a verification code has been sent.'];
-}
+    $stmt = $conn->prepare('DELETE FROM password_reset_tokens WHERE user_id = ?');
+    $stmt->bind_param('i', $user['id']);
+    $stmt->execute();
+    $stmt->close();
 
+    $code = (string) random_int(100000, 999999);
+    $codeHash = password_hash($code, PASSWORD_DEFAULT);
+    $stmt = $conn->prepare(
+        'INSERT INTO password_reset_tokens (user_id, code_hash, expires_at)
+         VALUES (?, ?, DATE_ADD(NOW(), INTERVAL 15 MINUTE))'
+    );
+    $stmt->bind_param('is', $user['id'], $codeHash);
+    $stmt->execute();
+    $stmt->close();
+
+    $_SESSION['password_reset_email'] = $email;
+
+    return [
+        'error' => '',
+        'success' => 'Your verification code is ' . $code . '. It expires in 15 minutes.',
+    ];
+}
 function verify_reset_code(mysqli $conn, string $code): array
 {
     if (!preg_match('/^\d{6}$/', $code)) {
@@ -365,7 +270,7 @@ if ($completed) {
         </div>
         <div class="welcome-text">
             <h3>Forgot Password</h3>
-            <p>Verify your identity to create a new password.</p>
+            <p>Generate a verification code to create a new password.</p>
         </div>
     </div>
 
@@ -387,7 +292,7 @@ if ($completed) {
                     <input type="email" name="email" id="email" placeholder="Enter your registered email" required autocomplete="email">
                 </div>
             </div>
-            <button type="submit" class="btn-primary">Send Verification Code</button>
+            <button type="submit" class="btn-primary">Generate Verification Code</button>
         </form>
     <?php elseif ($step === 'verify'): ?>
         <form action="forgot-password.php" method="POST">
@@ -415,11 +320,20 @@ if ($completed) {
                 <label for="new_password">New Password</label>
                 <div class="input-wrapper">
                     <i class="fa-solid fa-lock input-icon"></i>
-                    <input type="password" name="new_password" id="new_password" placeholder="Create a new password" required autocomplete="new-password">
+                    <input type="password" name="new_password" id="new_password" placeholder="Create a new password" required minlength="8" pattern="(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z\d]).{8,}" title="Use at least 8 characters with uppercase, lowercase, a number, and a special character." autocomplete="new-password">
                     <i class="fa-regular fa-eye toggle-password" data-password-target="new_password"></i>
                 </div>
             </div>
-            <div class="password-requirements">Use 8+ characters with uppercase, lowercase, a number, and a special character.</div>
+            <div class="password-strength" aria-live="polite">
+                <div class="password-strength-track">
+                    <div id="password-strength-bar" class="password-strength-bar" role="progressbar" aria-label="Password strength" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"></div>
+                </div>
+                <div class="password-strength-details">
+                    <span id="password-strength-label">Enter a password</span>
+                    <span id="password-length-label">0/8 characters</span>
+                </div>
+            </div>
+            <div class="password-requirements">Use 8+ characters with uppercase, lowercase, a number, and a special character. Example: <strong>Hrm@11!A</strong></div>
             <div class="input-group">
                 <label for="confirm_password">Confirm New Password</label>
                 <div class="input-wrapper">
@@ -452,6 +366,52 @@ if ($completed) {
             toggle.classList.toggle('fa-eye-slash', hidden);
         });
     });
+
+    const passwordInput = document.getElementById('new_password');
+    const strengthBar = document.getElementById('password-strength-bar');
+    const strengthLabel = document.getElementById('password-strength-label');
+    const lengthLabel = document.getElementById('password-length-label');
+
+    if (passwordInput && strengthBar && strengthLabel && lengthLabel) {
+        const updatePasswordStrength = () => {
+            const password = passwordInput.value;
+            const checks = [
+                password.length >= 8,
+                /[a-z]/.test(password),
+                /[A-Z]/.test(password),
+                /\d/.test(password),
+                /[^A-Za-z\d]/.test(password),
+            ];
+            const score = checks.filter(Boolean).length;
+
+            strengthBar.className = 'password-strength-bar';
+            if (password === '') {
+                strengthBar.style.width = '0';
+                strengthLabel.textContent = 'Enter a password';
+                strengthBar.setAttribute('aria-valuenow', '0');
+            } else if (score <= 2) {
+                strengthBar.classList.add('weak');
+                strengthBar.style.width = '33%';
+                strengthLabel.textContent = 'Weak';
+                strengthBar.setAttribute('aria-valuenow', '33');
+            } else if (score < 5) {
+                strengthBar.classList.add('medium');
+                strengthBar.style.width = '66%';
+                strengthLabel.textContent = 'Almost secure';
+                strengthBar.setAttribute('aria-valuenow', '66');
+            } else {
+                strengthBar.classList.add('strong');
+                strengthBar.style.width = '100%';
+                strengthLabel.textContent = 'Strong and secure';
+                strengthBar.setAttribute('aria-valuenow', '100');
+            }
+
+            lengthLabel.textContent = `${password.length}/8 characters`;
+        };
+
+        passwordInput.addEventListener('input', updatePasswordStrength);
+        updatePasswordStrength();
+    }
 </script>
 </body>
 </html>
